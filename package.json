@@ -1,0 +1,27 @@
+{
+  "name": "daily-link-clipper",
+  "version": "0.1.0",
+  "description": "Obsidian plugin that clips links dropped into daily notes and routes them into wishlist and reading-list bases.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production && npm run copy",
+    "copy": "mkdir -p dist && cp manifest.json dist/ && cp README.md dist/ || true",
+    "clean": "rm -rf dist && mkdir -p dist"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "clipper"
+  ],
+  "author": "Unintendedsideeffects",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.21.5",
+    "obsidian": "latest",
+    "tslib": "^2.6.2",
+    "typescript": "^5.4.0"
+  }
+}

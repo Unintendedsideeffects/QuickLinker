@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "inlineSourceMap": true,
+    "inlineSources": true,
+    "module": "ESNext",
+    "target": "ES6",
+    "allowJs": false,
+    "noImplicitAny": false,
+    "moduleResolution": "node",
+    "importHelpers": true,
+    "isolatedModules": true,
+    "strictNullChecks": true,
+    "rootDir": "src",
+    "lib": [
+      "DOM",
+      "ES2020"
+    ]
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}
