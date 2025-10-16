@@ -4,6 +4,7 @@ import {
   Plugin,
   PluginSettingTab,
   Setting,
+  TAbstractFile,
   TFile,
   normalizePath,
   requestUrl,
@@ -191,7 +192,7 @@ export default class DailyLinkClipperPlugin extends Plugin {
     return this.settings.openRouterApiKey.trim();
   }
 
-  private onFileModify(file: TFile): void {
+  private onFileModify(file: TAbstractFile): void {
     if (!(file instanceof TFile) || file.extension !== 'md') {
       return;
     }
@@ -269,8 +270,7 @@ export default class DailyLinkClipperPlugin extends Plugin {
         headers: {
           'User-Agent': 'ObsidianDailyLinkClipper/0.1',
         },
-        timeout: this.settings.fetchTimeoutSeconds * 1000,
-      });
+      } as any);
 
       return {
         status: response.status,
@@ -355,8 +355,7 @@ export default class DailyLinkClipperPlugin extends Plugin {
             ],
             temperature: 0,
           }),
-          timeout: this.settings.fetchTimeoutSeconds * 1000,
-        });
+        } as any);
 
         const data = JSON.parse(response.text ?? '{}');
         const choice = data?.choices?.[0]?.message?.content?.trim().toLowerCase();
@@ -412,13 +411,11 @@ export default class DailyLinkClipperPlugin extends Plugin {
     if (value === null || value === undefined) {
       return '""';
     }
-    if (typeof value !== 'string') {
-      value = String(value);
-    }
-    if (!value.length) {
+    const stringValue = typeof value !== 'string' ? String(value) : value;
+    if (!stringValue.length) {
       return '""';
     }
-    return JSON.stringify(value);
+    return JSON.stringify(stringValue);
   }
 
   private truncate(value: string, limit: number): string {
