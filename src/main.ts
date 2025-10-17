@@ -365,8 +365,7 @@ export default class DailyLinkClipperPlugin extends Plugin {
     const metadata = this.extractMetadata(url, page);
     const category = await this.classifyLink(metadata);
     const noteContent = this.buildNoteContent(metadata, category, sourceFile.path);
-    const notePath = await this.createClippingNote(metadata, noteContent);
-    await this.appendToBase(category, metadata, notePath);
+    await this.createClippingNote(metadata, noteContent);
     new Notice(`Saved clip for ${metadata.title || url}`);
   }
 
@@ -492,15 +491,30 @@ export default class DailyLinkClipperPlugin extends Plugin {
   }
 
   private heuristicClassification(metadata: LinkMetadata): 'product' | 'article' {
-    const productKeywords = ['product', 'buy', 'store', 'shop', 'cart', 'price', 'sale'];
+    const productKeywords = [
+      'product', 'buy', 'store', 'shop', 'cart', 'price', 'sale', 'purchase',
+      'best ', ' review', 'buying guide', 'comparison', 'vs ', ' vs.',
+      'turntable', 'speaker', 'headphone', 'laptop', 'phone', 'tablet',
+      'camera', 'watch', 'gadget', 'device', 'smart home', 'air purifier',
+      'display', 'monitor', 'keyboard', 'mouse', 'charger', 'furniture',
+      'plush', 'toy', 'book ', 'vinyl', 'record player', 'audio', 'electronics',
+      'recommended', 'top ', 'must-have', 'worth buying', 'deals', '$', '€', '£',
+    ];
     const host = this.tryParseHost(metadata.url);
     const text = `${metadata.title} ${metadata.description}`.toLowerCase();
 
-    if (host && /amazon|etsy|ebay|aliexpress|ikea|nike|store|shop/.test(host)) {
+    // Check for e-commerce domains
+    if (host && /amazon|etsy|ebay|aliexpress|ikea|nike|store|shop|bstn|killstar/.test(host)) {
       return 'product';
     }
 
+    // Check for product-related keywords
     if (productKeywords.some((keyword) => text.includes(keyword))) {
+      return 'product';
+    }
+
+    // Check for buying guide patterns (e.g., "5 Best", "Top 10")
+    if (/\d+\s+(best|top|great|good|recommended)/i.test(text)) {
       return 'product';
     }
 
@@ -535,12 +549,14 @@ export default class DailyLinkClipperPlugin extends Plugin {
 
   private buildNoteContent(metadata: LinkMetadata, category: 'product' | 'article', sourcePath: string): string {
     const captured = moment().format('YYYY-MM-DD HH:mm');
+    const tag = category === 'product' ? 'wishlist' : 'readinglist';
     const lines: string[] = [];
     lines.push('---');
     lines.push(`title: ${this.formatFrontmatterValue(metadata.title || metadata.url)}`);
     lines.push(`source: ${this.formatFrontmatterValue(metadata.url)}`);
     lines.push(`captured: ${this.formatFrontmatterValue(captured)}`);
     lines.push(`category: ${this.formatFrontmatterValue(category)}`);
+    lines.push(`tags: [${tag}]`);
     lines.push(`origin: ${this.formatFrontmatterValue(sourcePath)}`);
     lines.push('---');
 
@@ -633,55 +649,53 @@ export default class DailyLinkClipperPlugin extends Plugin {
     throw new Error('Daily Link Clipper could not create a unique clipping note name.');
   }
 
-  private async appendToBase(category: 'product' | 'article', metadata: LinkMetadata, notePath: string): Promise<void> {
-    const entry = {
-      title: metadata.title,
-      url: metadata.url,
-      clippedNote: notePath,
-      captured: moment().format(),
-      status: category === 'product' ? 'wishlist' : 'to-read',
-    };
-
-    const basePath = category === 'product' ? this.settings.wishlistBasePath : this.settings.readingListBasePath;
-    const normalized = normalizePath(basePath);
-    const parent = this.getParentFolder(normalized);
-    if (parent) {
-      await this.ensureFolderExists(parent);
-    }
-
-    const existingFile = this.app.vault.getAbstractFileByPath(normalized);
-    if (!(existingFile instanceof TFile)) {
-      const initial = JSON.stringify({ entries: [entry] }, null, 2);
-      await this.app.vault.create(normalized, `${initial}\n`);
-      return;
-    }
-
-    try {
-      const raw = await this.app.vault.read(existingFile);
-      let data: { entries: Array<{ url: string }> };
-      try {
-        data = JSON.parse(raw);
-      } catch (error) {
-        data = { entries: [] };
-      }
-
-      if (!Array.isArray((data as any).entries)) {
-        data.entries = [];
-      }
-
-      const exists = data.entries.some((item) => item.url === entry.url);
-      if (!exists) {
-        (data.entries as any).push(entry);
-        await this.app.vault.modify(existingFile, `${JSON.stringify(data, null, 2)}\n`);
-      }
-    } catch (error) {
-      console.error('Daily Link Clipper could not update base file', error);
-    }
-  }
 
   // Accessors used by the setting tab
   get pluginSettings(): DailyLinkClipperSettings {
     return this.settings;
+  }
+
+  public async recreateBaseFiles(): Promise<void> {
+    const bases = [
+      { path: this.settings.wishlistBasePath, tag: 'wishlist', category: 'product' as const, name: 'Wishlist' },
+      { path: this.settings.readingListBasePath, tag: 'readinglist', category: 'article' as const, name: 'Reading List' },
+    ];
+
+    for (const base of bases) {
+      const normalized = normalizePath(base.path);
+      const parent = this.getParentFolder(normalized);
+      if (parent) {
+        await this.ensureFolderExists(parent);
+      }
+
+      const existingFile = this.app.vault.getAbstractFileByPath(normalized);
+      if (existingFile instanceof TFile) {
+        await this.app.vault.delete(existingFile);
+      }
+
+      const yamlContent = `filters:
+  or:
+    - file.hasTag("${base.tag}")
+views:
+  - type: table
+    name: ${base.name}
+    order:
+      - file.name
+      - captured
+      - status
+`;
+
+      await this.app.vault.create(normalized, yamlContent);
+    }
+
+    new Notice('Base files recreated successfully.');
+  }
+
+  public async rescanAllLinks(): Promise<void> {
+    this.settings.processedLinks = {};
+    await this.saveSettings();
+    await this.processAllDailyNotes();
+    new Notice('Rescan complete. All daily notes have been reprocessed.');
   }
 }
 
@@ -841,6 +855,42 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.pluginSettings.classificationFallback = (value as 'product' | 'article');
             await this.plugin.saveSettings();
+          }),
+      );
+
+    containerEl.createEl('h3', { text: 'Maintenance' });
+
+    new Setting(containerEl)
+      .setName('Recreate base files')
+      .setDesc('Delete and recreate the base files with proper filter structure. All existing entries will be lost.')
+      .addButton((button) =>
+        button
+          .setButtonText('Recreate base files')
+          .setCta()
+          .onClick(async () => {
+            button.setDisabled(true);
+            try {
+              await this.plugin.recreateBaseFiles();
+            } finally {
+              button.setDisabled(false);
+            }
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Rescan all links')
+      .setDesc('Clear the processed links cache and reprocess all daily notes. Useful after changing classification settings.')
+      .addButton((button) =>
+        button
+          .setButtonText('Rescan all links')
+          .setWarning()
+          .onClick(async () => {
+            button.setDisabled(true);
+            try {
+              await this.plugin.rescanAllLinks();
+            } finally {
+              button.setDisabled(false);
+            }
           }),
       );
 
