@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "minAppVersion": "1.5.0",
   "description": "Scrape links dropped into today's daily note, create a clipped note, and route products to wishlist bases and articles to reading list bases.",
-  "author": "Codex Assistant",
+  "author": "Unintendedsideeffects",
   "authorUrl": "",
-  "isDesktopOnly": false
+  "isDesktopOnly": false,
+  "js": "main.js",
+  "css": "styles.css"
 }

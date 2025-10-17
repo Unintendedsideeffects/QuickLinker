@@ -10,9 +10,56 @@ import {
   requestUrl,
   moment,
 } from 'obsidian';
-import { promises as fs } from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+
+declare const require: ((id: string) => unknown) | undefined;
+
+type FsPromises = typeof import('fs')['promises'];
+type PathModule = typeof import('path');
+type OsModule = typeof import('os');
+
+interface NodeAdapters {
+  fs: FsPromises | null;
+  path: PathModule | null;
+  os: OsModule | null;
+}
+
+const loadNodeAdapters = (): NodeAdapters => {
+  let req: ((id: string) => unknown) | null = null;
+
+  if (typeof require === 'function') {
+    req = require;
+  } else if (typeof window !== 'undefined') {
+    const candidate = (window as typeof window & { require?: unknown }).require;
+    if (typeof candidate === 'function') {
+      req = candidate as (id: string) => unknown;
+    }
+  } else if (typeof globalThis !== 'undefined') {
+    const candidate = (globalThis as typeof globalThis & { require?: unknown }).require;
+    if (typeof candidate === 'function') {
+      req = candidate as (id: string) => unknown;
+    }
+  }
+
+  if (!req) {
+    return { fs: null, path: null, os: null };
+  }
+
+  try {
+    const fsModule = req('fs') as { promises?: FsPromises } | undefined;
+    const pathModule = req('path') as PathModule | undefined;
+    const osModule = req('os') as OsModule | undefined;
+    return {
+      fs: fsModule?.promises ?? null,
+      path: pathModule ?? null,
+      os: osModule ?? null,
+    };
+  } catch (error) {
+    console.error('Daily Link Clipper could not load Node adapters', error);
+    return { fs: null, path: null, os: null };
+  }
+};
+
+const nodeAdapters = loadNodeAdapters();
 
 interface LinkMetadata {
   url: string;
@@ -62,6 +109,7 @@ export default class DailyLinkClipperPlugin extends Plugin {
   private debounceHandles: Map<string, number> = new Map();
   private keyFileErrorNotified = false;
   private keyFileEmptyNotified = false;
+  private keyFileUnsupportedNotified = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -81,10 +129,16 @@ export default class DailyLinkClipperPlugin extends Plugin {
       },
     });
 
-    const startupFile = this.getTodayDailyFile();
-    if (startupFile) {
-      await this.processDailyFile(startupFile);
-    }
+    this.addCommand({
+      id: 'process-all-daily-links',
+      name: 'Process all daily links',
+      callback: async () => {
+        await this.processAllDailyNotes();
+        new Notice('Daily Link Clipper finished processing all daily notes.');
+      },
+    });
+
+    await this.processAllDailyNotes();
   }
 
   onunload(): void {
@@ -115,6 +169,38 @@ export default class DailyLinkClipperPlugin extends Plugin {
     return file instanceof TFile ? file : null;
   }
 
+  private getDailyFolderPath(): string {
+    return normalizePath(this.settings.dailyFolder || '');
+  }
+
+  private getAllDailyNoteFiles(): TFile[] {
+    const folderPath = this.getDailyFolderPath();
+    if (!folderPath) {
+      return [];
+    }
+
+    const prefix = folderPath.endsWith('/') ? folderPath : `${folderPath}/`;
+    return this.app.vault
+      .getFiles()
+      .filter((file) => file.extension === 'md')
+      .filter((file) => {
+        const normalized = normalizePath(file.path);
+        return normalized === folderPath || normalized.startsWith(prefix);
+      })
+      .sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  private async processAllDailyNotes(): Promise<void> {
+    const files = this.getAllDailyNoteFiles();
+    for (const file of files) {
+      try {
+        await this.processDailyFile(file);
+      } catch (error) {
+        console.error('Daily Link Clipper failed while processing daily note', file.path, error);
+      }
+    }
+  }
+
   private getParentFolder(targetPath: string): string {
     if (!targetPath) {
       return '';
@@ -143,15 +229,23 @@ export default class DailyLinkClipperPlugin extends Plugin {
     if (!candidate) {
       return null;
     }
+    const nodePath = nodeAdapters.path;
+    const nodeOs = nodeAdapters.os;
+
     if (candidate.startsWith('~')) {
-      candidate = path.join(os.homedir(), candidate.slice(1));
+      if (!nodePath || !nodeOs) {
+        return null;
+      }
+      candidate = nodePath.join(nodeOs.homedir(), candidate.slice(1));
     }
-    if (!path.isAbsolute(candidate)) {
+
+    if (nodePath && !nodePath.isAbsolute(candidate)) {
       const base = this.getVaultBasePath();
       if (base) {
-        candidate = path.resolve(base, candidate);
+        candidate = nodePath.resolve(base, candidate);
       }
     }
+
     return candidate;
   }
 
@@ -169,9 +263,23 @@ export default class DailyLinkClipperPlugin extends Plugin {
     const pathSetting = this.settings.openRouterKeyPath?.trim();
     if (pathSetting) {
       const resolved = this.resolveKeyPath(pathSetting);
-      if (resolved) {
+      if (!resolved) {
+        if (!this.keyFileUnsupportedNotified) {
+          new Notice('Daily Link Clipper: key file path is not supported on this platform.');
+          this.keyFileUnsupportedNotified = true;
+        }
+        return this.settings.openRouterApiKey.trim();
+      }
+
+      const fsModule = nodeAdapters.fs;
+      if (!fsModule) {
+        if (!this.keyFileUnsupportedNotified) {
+          new Notice('Daily Link Clipper: key file access is unavailable on this platform.');
+          this.keyFileUnsupportedNotified = true;
+        }
+      } else {
         try {
-          const fileKey = (await fs.readFile(resolved, 'utf8')).trim();
+          const fileKey = (await fsModule.readFile(resolved, 'utf8')).trim();
           if (fileKey) {
             return fileKey;
           }
