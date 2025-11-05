@@ -3,9 +3,10 @@
   "name": "Daily Link Clipper",
   "version": "0.1.0",
   "minAppVersion": "1.5.0",
-  "description": "Scrape links dropped into today's daily note, create a clipped note, and route products to wishlist bases and articles to reading list bases.",
+  "description": "Automatically clip links from your daily notes, extract metadata, classify as product or article, and organize into Obsidian Bases for easy tracking.",
   "author": "Unintendedsideeffects",
-  "authorUrl": "",
+  "authorUrl": "https://github.com/Unintendedsideeffects",
+  "fundingUrl": "https://github.com/sponsors/Unintendedsideeffects",
   "isDesktopOnly": false,
   "js": "main.js",
   "css": "styles.css"
