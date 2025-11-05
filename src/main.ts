@@ -550,12 +550,14 @@ export default class DailyLinkClipperPlugin extends Plugin {
   private buildNoteContent(metadata: LinkMetadata, category: 'product' | 'article', sourcePath: string): string {
     const captured = moment().format('YYYY-MM-DD HH:mm');
     const tag = category === 'product' ? 'wishlist' : 'readinglist';
+    const status = category === 'product' ? 'wishlist' : 'to-read';
     const lines: string[] = [];
     lines.push('---');
     lines.push(`title: ${this.formatFrontmatterValue(metadata.title || metadata.url)}`);
     lines.push(`source: ${this.formatFrontmatterValue(metadata.url)}`);
     lines.push(`captured: ${this.formatFrontmatterValue(captured)}`);
     lines.push(`category: ${this.formatFrontmatterValue(category)}`);
+    lines.push(`status: ${this.formatFrontmatterValue(status)}`);
     lines.push(`tags: [${tag}]`);
     lines.push(`origin: ${this.formatFrontmatterValue(sourcePath)}`);
     lines.push('---');
@@ -657,8 +659,8 @@ export default class DailyLinkClipperPlugin extends Plugin {
 
   public async recreateBaseFiles(): Promise<void> {
     const bases = [
-      { path: this.settings.wishlistBasePath, tag: 'wishlist', category: 'product' as const, name: 'Wishlist' },
-      { path: this.settings.readingListBasePath, tag: 'readinglist', category: 'article' as const, name: 'Reading List' },
+      { path: this.settings.wishlistBasePath, tag: 'wishlist', name: 'Wishlist' },
+      { path: this.settings.readingListBasePath, tag: 'readinglist', name: 'Reading List' },
     ];
 
     for (const base of bases) {
@@ -673,19 +675,32 @@ export default class DailyLinkClipperPlugin extends Plugin {
         await this.app.vault.delete(existingFile);
       }
 
-      const yamlContent = `filters:
-  or:
-    - file.hasTag("${base.tag}")
-views:
-  - type: table
-    name: ${base.name}
-    order:
-      - file.name
-      - captured
-      - status
+      // Create Bases plugin-compatible filter file
+      const baseContent = `---
+base:
+  filters:
+    or:
+      - file.tags.includes("${base.tag}")
+  views:
+    - type: table
+      name: ${base.name}
+      columns:
+        - id: title
+          name: Title
+          key: file.frontmatter.title
+        - id: captured
+          name: Captured
+          key: file.frontmatter.captured
+        - id: status
+          name: Status
+          key: file.frontmatter.status
+        - id: source
+          name: Source
+          key: file.frontmatter.source
+---
 `;
 
-      await this.app.vault.create(normalized, yamlContent);
+      await this.app.vault.create(normalized, baseContent);
     }
 
     new Notice('Base files recreated successfully.');
