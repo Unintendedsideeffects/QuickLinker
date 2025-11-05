@@ -3,8 +3,14 @@ name: Release Plugin
 on:
   push:
     tags:
-      - '*'
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.0 or 0.2.0-beta.1)'
+        required: true
+        type: string
 
 jobs:
   release:
@@ -26,6 +32,12 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
+    - name: Validate versions
+      run: npm run validate
+
+    - name: Run linter
+      run: npm run lint
+
     - name: Build plugin
       run: npm run build
 
@@ -35,6 +47,26 @@ jobs:
         VERSION=$(node -p "require('./manifest.json').version")
         echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
         echo "Building version: $VERSION"
+
+        # Determine if this is a beta release
+        if [[ "$VERSION" == *"beta"* ]]; then
+          echo "IS_BETA=true" >> $GITHUB_OUTPUT
+          echo "This is a beta release"
+        else
+          echo "IS_BETA=false" >> $GITHUB_OUTPUT
+          echo "This is a stable release"
+        fi
+
+    - name: Validate tag matches version
+      if: github.event_name == 'push'
+      run: |
+        TAG_VERSION="${GITHUB_REF#refs/tags/}"
+        MANIFEST_VERSION="${{ steps.get_version.outputs.VERSION }}"
+        if [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
+          echo "❌ Tag version ($TAG_VERSION) doesn't match manifest version ($MANIFEST_VERSION)"
+          exit 1
+        fi
+        echo "✅ Tag matches manifest version"
 
     - name: Create release package
       run: |
@@ -47,12 +79,30 @@ jobs:
         zip -r ../daily-link-clipper-${{ steps.get_version.outputs.VERSION }}.zip .
         cd ..
 
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Get the previous tag
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+        if [ -z "$PREV_TAG" ]; then
+          echo "First release - no previous tag found"
+          CHANGELOG="Initial release of Daily Link Clipper"
+        else
+          echo "Generating changelog from ${PREV_TAG} to HEAD"
+          CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+        fi
+
+        # Save to file for the release
+        echo "$CHANGELOG" > CHANGELOG.txt
+        cat CHANGELOG.txt
+
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
-        name: Release ${{ steps.get_version.outputs.VERSION }}
+        name: ${{ steps.get_version.outputs.IS_BETA == 'true' && format('Beta Release {0}', steps.get_version.outputs.VERSION) || format('Release {0}', steps.get_version.outputs.VERSION) }}
         draft: false
-        prerelease: false
+        prerelease: ${{ steps.get_version.outputs.IS_BETA == 'true' }}
         files: |
           daily-link-clipper-${{ steps.get_version.outputs.VERSION }}.zip
           dist/main.js
@@ -62,12 +112,24 @@ jobs:
         body: |
           ## Daily Link Clipper v${{ steps.get_version.outputs.VERSION }}
 
+          ${{ steps.get_version.outputs.IS_BETA == 'true' && '⚠️ **This is a beta release** - Use with caution and report any issues.' || '' }}
+
           ### Installation
           1. Download `daily-link-clipper-${{ steps.get_version.outputs.VERSION }}.zip`
           2. Extract the files to your vault's `.obsidian/plugins/daily-link-clipper/` directory
           3. Enable the plugin in Obsidian settings
 
-          ### What's Changed
-          See the commit history for details.
+          ### Changes in this release
+          ${{ steps.changelog.outputs.changelog || 'See commit history for details' }}
+
+          ### Features
+          - Automatically clip links from daily notes
+          - AI-powered classification (product vs article)
+          - Integration with Obsidian Bases plugin
+          - Configurable wishlist and reading list bases
+          - Support for OpenRouter API or heuristic classification
+
+          ---
+          **Full Changelog**: https://github.com/${{ github.repository }}/commits/v${{ steps.get_version.outputs.VERSION }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

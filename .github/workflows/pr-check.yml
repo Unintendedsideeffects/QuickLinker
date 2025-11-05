@@ -1,0 +1,88 @@
+name: PR Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Validate versions
+      run: npm run validate
+
+    - name: Run linter
+      run: npm run lint
+
+    - name: Type check
+      run: npx tsc --noEmit --skipLibCheck
+
+    - name: Build plugin
+      run: npm run build
+
+    - name: Check bundle size
+      id: bundle_size
+      run: |
+        SIZE=$(stat -f%z dist/main.js 2>/dev/null || stat -c%s dist/main.js)
+        echo "size=$SIZE" >> $GITHUB_OUTPUT
+        echo "### Bundle Size: ${SIZE} bytes" >> $GITHUB_STEP_SUMMARY
+
+        # Add warning if over 500KB
+        if [ $SIZE -gt 500000 ]; then
+          echo "⚠️ Bundle is larger than 500KB" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Comment PR with bundle size
+      uses: actions/github-script@v7
+      if: github.event_name == 'pull_request'
+      with:
+        script: |
+          const size = ${{ steps.bundle_size.outputs.size }};
+          const sizeKB = (size / 1024).toFixed(2);
+          const comment = `## 📦 Build Summary\n\n` +
+            `✅ Build successful!\n` +
+            `📊 Bundle size: **${sizeKB} KB** (${size} bytes)\n\n` +
+            (size > 500000 ? `⚠️ Warning: Bundle is larger than 500KB\n` : '');
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+    - name: Security audit
+      run: npm audit --audit-level=moderate || true
+
+  lint-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Check commit messages
+      run: |
+        echo "Checking commit messages..."
+        git log --format=%s origin/${{ github.base_ref }}..${{ github.sha }} | while read msg; do
+          if [ ${#msg} -gt 72 ]; then
+            echo "⚠️ Commit message too long (>72 chars): $msg"
+          fi
+        done

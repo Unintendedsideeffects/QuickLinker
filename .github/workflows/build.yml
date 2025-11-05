@@ -24,6 +24,21 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
+    - name: Validate versions
+      run: npm run validate
+
+    - name: Run linter
+      run: npm run lint
+
+    - name: Check bundle size
+      run: |
+        npm run build
+        SIZE=$(stat -f%z dist/main.js 2>/dev/null || stat -c%s dist/main.js)
+        echo "Bundle size: ${SIZE} bytes"
+        if [ $SIZE -gt 1000000 ]; then
+          echo "⚠️  Warning: Bundle size is larger than 1MB"
+        fi
+
     - name: Build plugin
       run: npm run build
 
@@ -35,12 +50,24 @@ jobs:
         test -f dist/styles.css || (echo "styles.css not found" && exit 1)
         echo "✓ All build outputs verified"
 
+    - name: Generate build info
+      run: |
+        echo "Build Date: $(date)" > dist/build-info.txt
+        echo "Commit: ${{ github.sha }}" >> dist/build-info.txt
+        echo "Branch: ${{ github.ref_name }}" >> dist/build-info.txt
+        echo "Version: $(node -p "require('./manifest.json').version")" >> dist/build-info.txt
+        SIZE=$(stat -f%z dist/main.js 2>/dev/null || stat -c%s dist/main.js)
+        echo "Bundle Size: ${SIZE} bytes" >> dist/build-info.txt
+        cat dist/build-info.txt
+
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: plugin-build
+        name: plugin-build-${{ github.sha }}
         path: |
           dist/main.js
           dist/manifest.json
+          dist/versions.json
           dist/styles.css
+          dist/build-info.txt
         retention-days: 7

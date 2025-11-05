@@ -594,7 +594,7 @@ export default class DailyLinkClipperPlugin extends Plugin {
 
   private async ensureFolderExists(targetPath: string): Promise<void> {
     const segments = normalizePath(targetPath).split('/');
-    let current = segments.shift();
+    const current = segments.shift();
     if (!current) {
       return;
     }
