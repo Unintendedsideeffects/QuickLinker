@@ -8,6 +8,7 @@ import {
   TFile,
   normalizePath,
   requestUrl,
+  RequestUrlParam,
   moment,
 } from 'obsidian';
 
@@ -21,6 +22,11 @@ interface NodeAdapters {
   fs: FsPromises | null;
   path: PathModule | null;
   os: OsModule | null;
+}
+
+interface VaultAdapter {
+  getBasePath?: () => string;
+  basePath?: string;
 }
 
 const loadNodeAdapters = (): NodeAdapters => {
@@ -211,7 +217,7 @@ export default class DailyLinkClipperPlugin extends Plugin {
   }
 
   private getVaultBasePath(): string | null {
-    const adapter = (this.app.vault as any)?.adapter;
+    const adapter = (this.app.vault as { adapter?: VaultAdapter })?.adapter;
     if (adapter?.getBasePath) {
       return adapter.getBasePath();
     }
@@ -371,13 +377,14 @@ export default class DailyLinkClipperPlugin extends Plugin {
 
   private async fetchPage(url: string): Promise<{ status: number; html: string }> {
     try {
-      const response = await requestUrl({
+      const options: RequestUrlParam = {
         url,
         method: 'GET',
         headers: {
           'User-Agent': 'ObsidianDailyLinkClipper/0.1',
         },
-      } as any);
+      };
+      const response = await requestUrl(options);
 
       return {
         status: response.status,
@@ -447,7 +454,7 @@ export default class DailyLinkClipperPlugin extends Plugin {
     if (apiKey) {
       try {
         const prompt = this.composeClassificationPrompt(metadata);
-        const response = await requestUrl({
+        const options: RequestUrlParam = {
           url: 'https://openrouter.ai/api/v1/chat/completions',
           method: 'POST',
           headers: {
@@ -462,7 +469,8 @@ export default class DailyLinkClipperPlugin extends Plugin {
             ],
             temperature: 0,
           }),
-        } as any);
+        };
+        const response = await requestUrl(options);
 
         const data = JSON.parse(response.text ?? '{}');
         const choice = data?.choices?.[0]?.message?.content?.trim().toLowerCase();
@@ -725,11 +733,20 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+
+    // Header
     containerEl.createEl('h2', { text: 'Daily Link Clipper' });
+    containerEl.createEl('p', {
+      text: 'Automatically clip and organize links from your daily notes.',
+      cls: 'setting-item-description'
+    });
+
+    // Section 1: File Paths & Organization
+    containerEl.createEl('h3', { text: 'File Organization' });
 
     new Setting(containerEl)
-      .setName('Daily folder')
-      .setDesc('Relative path that holds daily notes.')
+      .setName('Daily notes folder')
+      .setDesc('Folder containing your daily notes.')
       .addText((text) =>
         text
           .setPlaceholder('Daily')
@@ -741,8 +758,8 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Daily file date format')
-      .setDesc('Moment.js format for the daily file name.')
+      .setName('Daily note format')
+      .setDesc('Date format for daily note filenames (Moment.js syntax).')
       .addText((text) =>
         text
           .setPlaceholder('YYYY-MM-DD')
@@ -754,8 +771,8 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Clip folder')
-      .setDesc('Folder where clipped notes should be stored.')
+      .setName('Clippings folder')
+      .setDesc('Where to save clipped link notes.')
       .addText((text) =>
         text
           .setPlaceholder('Attachments/Clippings')
@@ -767,8 +784,8 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Wishlist base path')
-      .setDesc('File that stores JSON entries for products.')
+      .setName('Wishlist base')
+      .setDesc('Obsidian Bases file for product links (requires Bases plugin).')
       .addText((text) =>
         text
           .setPlaceholder('Bases/Wishlist.base')
@@ -780,8 +797,8 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Reading list base path')
-      .setDesc('File that stores JSON entries for articles.')
+      .setName('Reading list base')
+      .setDesc('Obsidian Bases file for article links (requires Bases plugin).')
       .addText((text) =>
         text
           .setPlaceholder('Bases/ReadingList.base')
@@ -792,22 +809,30 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
           }),
       );
 
+    // Section 2: AI Classification (Optional)
+    containerEl.createEl('h3', { text: 'AI Classification (Optional)' });
+    containerEl.createEl('p', {
+      text: 'Use OpenRouter for AI-powered classification. Leave blank to use heuristic classification.',
+      cls: 'setting-item-description'
+    });
+
     new Setting(containerEl)
-      .setName('OpenRouter API key')
-      .setDesc('Stored locally. Required for model-based classification. Leave blank to use heuristics.')
-      .addText((text) =>
+      .setName('API key')
+      .setDesc('OpenRouter API key (stored locally in plugin settings).')
+      .addText((text) => {
         text
           .setPlaceholder('sk-or-...')
           .setValue(this.plugin.pluginSettings.openRouterApiKey)
           .onChange(async (value) => {
             this.plugin.pluginSettings.openRouterApiKey = value.trim();
             await this.plugin.saveSettings();
-          }),
-      );
+          });
+        text.inputEl.type = 'password';
+      });
 
     new Setting(containerEl)
-      .setName('OpenRouter key file path')
-      .setDesc('Optional absolute or vault-relative path to a file containing the API key. Tilde (~/) is supported.')
+      .setName('API key file')
+      .setDesc('Alternative: path to file containing API key. Supports ~/ for home directory.')
       .addText((text) =>
         text
           .setPlaceholder('~/secrets/openrouter.key')
@@ -819,8 +844,8 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('OpenRouter model')
-      .setDesc('Model identifier for classification requests.')
+      .setName('Model')
+      .setDesc('OpenRouter model identifier. See openrouter.ai/models for options.')
       .addText((text) =>
         text
           .setPlaceholder('anthropic/claude-3.5-sonnet')
@@ -831,23 +856,12 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(containerEl)
-      .setName('Fetch timeout (seconds)')
-      .setDesc('Maximum time to wait when downloading a page or calling OpenRouter.')
-      .addSlider((slider) =>
-        slider
-          .setLimits(5, 60, 1)
-          .setValue(this.plugin.pluginSettings.fetchTimeoutSeconds)
-          .onChange(async (value) => {
-            this.plugin.pluginSettings.fetchTimeoutSeconds = value;
-            await this.plugin.saveSettings();
-          })
-          .setDynamicTooltip(),
-      );
+    // Section 3: Advanced Settings
+    containerEl.createEl('h3', { text: 'Advanced' });
 
     new Setting(containerEl)
-      .setName('Modify debounce (ms)')
-      .setDesc('Delay after edits before processing the daily note again.')
+      .setName('Modification debounce')
+      .setDesc('Delay (ms) after editing daily note before auto-processing.')
       .addSlider((slider) =>
         slider
           .setLimits(250, 5000, 50)
@@ -860,8 +874,36 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('Fetch timeout')
+      .setDesc('Maximum seconds to wait when fetching web pages or calling AI.')
+      .addSlider((slider) =>
+        slider
+          .setLimits(5, 60, 1)
+          .setValue(this.plugin.pluginSettings.fetchTimeoutSeconds)
+          .onChange(async (value) => {
+            this.plugin.pluginSettings.fetchTimeoutSeconds = value;
+            await this.plugin.saveSettings();
+          })
+          .setDynamicTooltip(),
+      );
+
+    new Setting(containerEl)
+      .setName('Max page content')
+      .setDesc('Maximum characters to extract from web pages for classification.')
+      .addSlider((slider) =>
+        slider
+          .setLimits(500, 10000, 500)
+          .setValue(this.plugin.pluginSettings.maxCharactersFromPage)
+          .onChange(async (value) => {
+            this.plugin.pluginSettings.maxCharactersFromPage = value;
+            await this.plugin.saveSettings();
+          })
+          .setDynamicTooltip(),
+      );
+
+    new Setting(containerEl)
       .setName('Fallback classification')
-      .setDesc('Used when OpenRouter is unavailable and heuristics are inconclusive.')
+      .setDesc('Default category when AI is unavailable and heuristics are uncertain.')
       .addDropdown((dropdown) =>
         dropdown
           .addOption('article', 'Article')
@@ -873,15 +915,16 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
           }),
       );
 
+    // Section 4: Maintenance
     containerEl.createEl('h3', { text: 'Maintenance' });
 
     new Setting(containerEl)
       .setName('Recreate base files')
-      .setDesc('Delete and recreate the base files with proper filter structure. All existing entries will be lost.')
+      .setDesc('⚠️ Deletes and recreates Wishlist/ReadingList base files. Use if format needs updating.')
       .addButton((button) =>
         button
-          .setButtonText('Recreate base files')
-          .setCta()
+          .setButtonText('Recreate Bases')
+          .setWarning()
           .onClick(async () => {
             button.setDisabled(true);
             try {
@@ -894,11 +937,11 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Rescan all links')
-      .setDesc('Clear the processed links cache and reprocess all daily notes. Useful after changing classification settings.')
+      .setDesc('Clears cache and reprocesses all daily notes. Useful after changing settings.')
       .addButton((button) =>
         button
-          .setButtonText('Rescan all links')
-          .setWarning()
+          .setButtonText('Rescan All')
+          .setCta()
           .onClick(async () => {
             button.setDisabled(true);
             try {
@@ -908,6 +951,5 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
             }
           }),
       );
-
   }
 }
