@@ -1,0 +1,73 @@
+name: Release Plugin
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build plugin
+      run: npm run build
+
+    - name: Get version from manifest
+      id: get_version
+      run: |
+        VERSION=$(node -p "require('./manifest.json').version")
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        echo "Building version: $VERSION"
+
+    - name: Create release package
+      run: |
+        mkdir -p release
+        cp dist/main.js release/
+        cp dist/manifest.json release/
+        cp dist/versions.json release/
+        cp dist/styles.css release/
+        cd release
+        zip -r ../daily-link-clipper-${{ steps.get_version.outputs.VERSION }}.zip .
+        cd ..
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        name: Release ${{ steps.get_version.outputs.VERSION }}
+        draft: false
+        prerelease: false
+        files: |
+          daily-link-clipper-${{ steps.get_version.outputs.VERSION }}.zip
+          dist/main.js
+          dist/manifest.json
+          dist/versions.json
+          dist/styles.css
+        body: |
+          ## Daily Link Clipper v${{ steps.get_version.outputs.VERSION }}
+
+          ### Installation
+          1. Download `daily-link-clipper-${{ steps.get_version.outputs.VERSION }}.zip`
+          2. Extract the files to your vault's `.obsidian/plugins/daily-link-clipper/` directory
+          3. Enable the plugin in Obsidian settings
+
+          ### What's Changed
+          See the commit history for details.
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

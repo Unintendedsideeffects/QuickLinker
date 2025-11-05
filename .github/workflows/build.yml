@@ -1,0 +1,46 @@
+name: Build Plugin
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build plugin
+      run: npm run build
+
+    - name: Verify build outputs
+      run: |
+        test -f dist/main.js || (echo "main.js not found" && exit 1)
+        test -f dist/manifest.json || (echo "manifest.json not found" && exit 1)
+        test -f dist/versions.json || (echo "versions.json not found" && exit 1)
+        test -f dist/styles.css || (echo "styles.css not found" && exit 1)
+        echo "✓ All build outputs verified"
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: plugin-build
+        path: |
+          dist/main.js
+          dist/manifest.json
+          dist/styles.css
+        retention-days: 7
