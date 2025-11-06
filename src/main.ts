@@ -75,9 +75,13 @@ interface LinkMetadata {
   status: number;
 }
 
+interface DailyNotesSettings {
+  folder?: string;
+  format?: string;
+  template?: string;
+}
+
 interface DailyLinkClipperSettings {
-  dailyFolder: string;
-  dailyFileDateFormat: string;
   clipFolder: string;
   wishlistBasePath: string;
   readingListBasePath: string;
@@ -92,8 +96,6 @@ interface DailyLinkClipperSettings {
 }
 
 const DEFAULT_SETTINGS: DailyLinkClipperSettings = {
-  dailyFolder: 'Daily',
-  dailyFileDateFormat: 'YYYY-MM-DD',
   clipFolder: 'Attachments/Clippings',
   wishlistBasePath: 'Bases/Wishlist.base',
   readingListBasePath: 'Bases/ReadingList.base',
@@ -158,15 +160,48 @@ export default class DailyLinkClipperPlugin extends Plugin {
     if (!this.settings.processedLinks) {
       this.settings.processedLinks = {};
     }
+
+    // Migration: Remove deprecated settings if they exist
+    const storedData = stored as Record<string, unknown>;
+    if (storedData && ('dailyFolder' in storedData || 'dailyFileDateFormat' in storedData)) {
+      delete storedData.dailyFolder;
+      delete storedData.dailyFileDateFormat;
+      await this.saveSettings();
+    }
   }
 
   public async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
   }
 
+  private getDailyNotesSettings(): DailyNotesSettings {
+    // Access Obsidian's daily notes settings
+    interface InternalPlugins {
+      internalPlugins?: {
+        plugins?: {
+          'daily-notes'?: {
+            instance?: {
+              options?: DailyNotesSettings;
+            };
+          };
+        };
+      };
+    }
+
+    const app = this.app as App & InternalPlugins;
+    const settings = app.internalPlugins?.plugins?.['daily-notes']?.instance?.options;
+
+    return {
+      folder: settings?.folder || '',
+      format: settings?.format || 'YYYY-MM-DD',
+      template: settings?.template || '',
+    };
+  }
+
   private getTodayDailyPath(): string {
-    const fileName = `${moment().format(this.settings.dailyFileDateFormat)}.md`;
-    return normalizePath(`${this.settings.dailyFolder}/${fileName}`);
+    const dailyNotesSettings = this.getDailyNotesSettings();
+    const fileName = `${moment().format(dailyNotesSettings.format)}.md`;
+    return normalizePath(`${dailyNotesSettings.folder}/${fileName}`);
   }
 
   private getTodayDailyFile(): TFile | null {
@@ -176,7 +211,8 @@ export default class DailyLinkClipperPlugin extends Plugin {
   }
 
   private getDailyFolderPath(): string {
-    return normalizePath(this.settings.dailyFolder || '');
+    const dailyNotesSettings = this.getDailyNotesSettings();
+    return normalizePath(dailyNotesSettings.folder || '');
   }
 
   private getAllDailyNoteFiles(): TFile[] {
@@ -744,31 +780,12 @@ class DailyLinkClipperSettingTab extends PluginSettingTab {
     // Section 1: File Paths & Organization
     containerEl.createEl('h3', { text: 'File Organization' });
 
-    new Setting(containerEl)
-      .setName('Daily notes folder')
-      .setDesc('Folder containing your daily notes.')
-      .addText((text) =>
-        text
-          .setPlaceholder('Daily')
-          .setValue(this.plugin.pluginSettings.dailyFolder)
-          .onChange(async (value) => {
-            this.plugin.pluginSettings.dailyFolder = value.trim() || 'Daily';
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName('Daily note format')
-      .setDesc('Date format for daily note filenames (Moment.js syntax).')
-      .addText((text) =>
-        text
-          .setPlaceholder('YYYY-MM-DD')
-          .setValue(this.plugin.pluginSettings.dailyFileDateFormat)
-          .onChange(async (value) => {
-            this.plugin.pluginSettings.dailyFileDateFormat = value.trim() || 'YYYY-MM-DD';
-            await this.plugin.saveSettings();
-          }),
-      );
+    // Info about daily notes integration
+    const dailyNotesInfo = containerEl.createDiv({ cls: 'setting-item' });
+    dailyNotesInfo.createDiv({ cls: 'setting-item-info' }).createDiv({
+      cls: 'setting-item-description',
+      text: '💡 This plugin uses your Obsidian Daily Notes settings. Configure folder and date format in Settings → Core Plugins → Daily Notes.',
+    });
 
     new Setting(containerEl)
       .setName('Clippings folder')
